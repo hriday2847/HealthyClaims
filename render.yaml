@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: clams-backend
+    env: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: LLM_MODEL
+        value: gpt-4o
+      - key: ENABLE_LLM_EXTRACTION
+        value: "true"
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: OPENAI_API_KEY
+        sync: false
+
+  - type: web
+    name: clams-frontend
+    env: node
+    buildCommand: cd frontend && npm install && npm run build
+    startCommand: cd frontend && npm run start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: clams-backend
+          envVarKey: RENDER_EXTERNAL_URL
