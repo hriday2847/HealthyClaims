@@ -15,5 +15,5 @@ COPY .env .
 # Expose port
 EXPOSE 8000
 
-# Run FastAPI with uvicorn
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run FastAPI with uvicorn using the PORT environment variable
+CMD sh -c "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"
