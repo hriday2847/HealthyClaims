@@ -2,18 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { apiGet } from '@/lib/api';
-
-function DecisionBadge({ decision, status }) {
-  if (status === 'DOCUMENT_ERROR') return <span className="badge badge-document-error">⚠ Doc Error</span>;
-  if (!decision) return <span className="badge badge-pending">Pending</span>;
-  const map = {
-    APPROVED: 'badge-approved',
-    PARTIAL: 'badge-partial',
-    REJECTED: 'badge-rejected',
-    MANUAL_REVIEW: 'badge-manual-review',
-  };
-  return <span className={`badge ${map[decision] || 'badge-pending'}`} style={{ fontSize: '1rem', padding: '6px 16px' }}>{decision?.replace('_', ' ')}</span>;
-}
+import DecisionBadge from '@/app/components/DecisionBadge';
 
 export default function ClaimDetail({ params }) {
   const [claim, setClaim] = useState(null);
@@ -41,7 +30,7 @@ export default function ClaimDetail({ params }) {
             Claim {claim.id}
           </h1>
         </div>
-        <DecisionBadge decision={result?.decision} status={claim.status} />
+        <DecisionBadge decision={result?.decision} status={claim.status} large />
       </div>
 
       <div className="grid-2 mb-24">

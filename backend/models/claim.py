@@ -50,6 +50,7 @@ class ClaimDocument(BaseModel):
     file_name: Optional[str] = None
     actual_type: str
     content: Optional[dict[str, Any]] = None
+    file_data: Optional[str] = None  # Base64-encoded image/PDF for LLM extraction
     quality: Optional[str] = "GOOD"
     patient_name_on_doc: Optional[str] = None
 

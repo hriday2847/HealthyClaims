@@ -4,16 +4,46 @@ Extracts structured information from uploaded medical documents.
 
 For test cases that provide structured content directly, this agent simply
 normalises and passes through. For real document uploads (images/PDFs),
-this agent would call an LLM vision model for extraction.
+this agent calls an LLM vision model for extraction when ENABLE_LLM_EXTRACTION
+is enabled.
 """
 
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any
 
 from backend.agents.base import AgentResult, BaseAgent
+from backend.config import ENABLE_LLM_EXTRACTION, LLM_MODEL, LLM_TIMEOUT_SECONDS, OPENAI_API_KEY
 from backend.models.claim import ClaimSubmission
 from backend.models.decision import CheckResult
+
+logger = logging.getLogger(__name__)
+
+# LLM extraction prompt for medical document parsing
+_EXTRACTION_PROMPT = """You are a medical document parser for an Indian health insurance claims system.
+Extract the following fields from this medical document image. Return ONLY valid JSON, no markdown.
+
+Fields to extract:
+- patient_name: string or null
+- doctor_name: string or null
+- doctor_registration: string or null (format: STATE/XXXXX/YYYY)
+- diagnosis: string or null
+- treatment: string or null
+- medicines: list of strings or []
+- tests_ordered: list of strings or []
+- hospital_name: string or null
+- line_items: list of {description: string, amount: number} or []
+- total: number or null
+- date: string (YYYY-MM-DD format) or null
+
+Handle:
+- Handwritten prescriptions (best effort)
+- Indian medical abbreviations (HTN=Hypertension, T2DM=Type 2 Diabetes, etc.)
+- Partial/blurry text (extract what's readable, leave unreadable fields as null)
+
+Return JSON only:"""
 
 
 class DocumentExtractorAgent(BaseAgent):
@@ -43,6 +73,28 @@ class DocumentExtractorAgent(BaseAgent):
 
         for doc in submission.documents:
             content = doc.content
+
+            # If no structured content but file_data exists, try LLM extraction
+            if not content and doc.file_data and ENABLE_LLM_EXTRACTION:
+                llm_result = self._extract_via_llm(doc.file_data, doc.actual_type)
+                if llm_result:
+                    content = llm_result
+                    checks.append(CheckResult(
+                        check_name=f"LLM Extract — {doc.file_id} ({doc.actual_type})",
+                        passed=True,
+                        detail=f"Extracted structured content via {LLM_MODEL} vision",
+                    ))
+                else:
+                    warnings.append(
+                        f"LLM extraction failed for document {doc.file_id} ({doc.actual_type})"
+                    )
+                    confidence_adjustments.append(-0.15)
+                    checks.append(CheckResult(
+                        check_name=f"LLM Extract — {doc.file_id}",
+                        passed=False,
+                        detail="LLM extraction returned no usable result",
+                    ))
+
             if not content:
                 warnings.append(
                     f"Document {doc.file_id} ({doc.actual_type}) has no extractable content"
@@ -143,3 +195,67 @@ class DocumentExtractorAgent(BaseAgent):
             checks=checks,
             warnings=warnings,
         )
+
+    @staticmethod
+    def _extract_via_llm(file_data: str, doc_type: str) -> dict | None:
+        """Call OpenAI GPT-4o vision to extract structured data from a document image.
+
+        Args:
+            file_data: Base64-encoded image data.
+            doc_type: The document type hint (e.g., PRESCRIPTION, HOSPITAL_BILL).
+
+        Returns:
+            Parsed dict of extracted fields, or None on failure.
+        """
+        if not OPENAI_API_KEY:
+            logger.warning("OPENAI_API_KEY not set — skipping LLM extraction")
+            return None
+
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=OPENAI_API_KEY, timeout=LLM_TIMEOUT_SECONDS)
+
+            # Determine media type (assume JPEG if not clear)
+            media_type = "image/jpeg"
+            if file_data.startswith("/9j/"):
+                media_type = "image/jpeg"
+            elif file_data.startswith("iVBOR"):
+                media_type = "image/png"
+            elif file_data.startswith("JVBER"):
+                media_type = "application/pdf"
+
+            response = client.chat.completions.create(
+                model=LLM_MODEL,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": f"{_EXTRACTION_PROMPT}\n\nDocument type hint: {doc_type}"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{media_type};base64,{file_data}",
+                                    "detail": "high",
+                                },
+                            },
+                        ],
+                    }
+                ],
+                max_tokens=2000,
+                temperature=0,
+            )
+
+            raw_text = response.choices[0].message.content.strip()
+            # Strip markdown code fences if present
+            if raw_text.startswith("```"):
+                raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
+                if raw_text.endswith("```"):
+                    raw_text = raw_text[:-3]
+
+            parsed = json.loads(raw_text)
+            return parsed if isinstance(parsed, dict) else None
+
+        except Exception as exc:
+            logger.warning(f"LLM extraction failed: {exc}")
+            return None

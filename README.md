@@ -38,7 +38,14 @@ This project is built using a multi-agent pipeline orchestrated in Python (FastA
 
 ## Testing
 
-Run `pytest backend/tests/test_pipeline.py` from the root directory to execute the assignment evaluation test cases.
+Run `pytest backend/tests/test_pipeline.py` to execute the assignment evaluation test cases.
+Run `pytest backend/tests/test_agents.py` to execute unit tests for individual pipeline components.
+
+## Documentation
+
+- **Architecture (`docs/architecture.md`)**: Complete overview of the system, data flow, failure handling philosophy, and scaling strategy.
+- **Component Contracts (`docs/component_contracts.md`)**: Precise interface specifications for every agent and service.
+- **Evaluation Report (`docs/eval_report.md`)**: Results and trace analysis for the 12 evaluation test cases.
 
 ## Deployment
 

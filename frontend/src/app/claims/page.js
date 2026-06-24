@@ -2,18 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { apiGet } from '@/lib/api';
-
-function DecisionBadge({ decision, status }) {
-  if (status === 'DOCUMENT_ERROR') return <span className="badge badge-document-error">⚠ Doc Error</span>;
-  if (!decision) return <span className="badge badge-pending">Pending</span>;
-  const map = {
-    APPROVED: 'badge-approved',
-    PARTIAL: 'badge-partial',
-    REJECTED: 'badge-rejected',
-    MANUAL_REVIEW: 'badge-manual-review',
-  };
-  return <span className={`badge ${map[decision] || 'badge-pending'}`}>{decision?.replace('_', ' ')}</span>;
-}
+import DecisionBadge from '@/app/components/DecisionBadge';
 
 export default function ClaimsList() {
   const [claims, setClaims] = useState([]);

@@ -18,6 +18,8 @@ from backend.services.policy_loader import (
     is_network_hospital,
 )
 
+_DATE_FMT = "%Y-%m-%d"
+
 
 class PolicyEngineAgent(BaseAgent):
     name = "Policy Engine"
@@ -31,6 +33,52 @@ class PolicyEngineAgent(BaseAgent):
         warnings: list[str] = []
         rejection_reasons: list[str] = []
         policy_data: dict[str, Any] = {}
+
+        # ── 0. Submission rules ───────────────────────────────────
+        sub_rules = policy.submission_rules
+        if submission.claimed_amount < sub_rules.minimum_claim_amount:
+            checks.append(CheckResult(
+                check_name="Minimum Claim Amount",
+                passed=False,
+                detail=(
+                    f"Claimed amount ₹{submission.claimed_amount:,.0f} is below the "
+                    f"minimum claim amount of ₹{sub_rules.minimum_claim_amount:,.0f}"
+                ),
+            ))
+            rejection_reasons.append("BELOW_MINIMUM")
+        else:
+            checks.append(CheckResult(
+                check_name="Minimum Claim Amount",
+                passed=True,
+                detail=f"₹{submission.claimed_amount:,.0f} meets minimum of ₹{sub_rules.minimum_claim_amount:,.0f}",
+            ))
+
+        try:
+            treatment_dt = datetime.strptime(submission.treatment_date, _DATE_FMT)
+            deadline = treatment_dt + timedelta(days=sub_rules.deadline_days_from_treatment)
+            today = datetime.utcnow()
+            if today > deadline:
+                checks.append(CheckResult(
+                    check_name="Submission Deadline",
+                    passed=False,
+                    detail=(
+                        f"Claim submitted after the {sub_rules.deadline_days_from_treatment}-day deadline. "
+                        f"Treatment date: {submission.treatment_date}, deadline was {deadline.strftime(_DATE_FMT)}."
+                    ),
+                ))
+                rejection_reasons.append("SUBMISSION_DEADLINE_EXCEEDED")
+            else:
+                checks.append(CheckResult(
+                    check_name="Submission Deadline",
+                    passed=True,
+                    detail=f"Within {sub_rules.deadline_days_from_treatment}-day submission window",
+                ))
+        except ValueError:
+            checks.append(CheckResult(
+                check_name="Submission Deadline",
+                passed=True,
+                detail="Could not parse treatment date for deadline check — skipped",
+            ))
 
         # ── 1. Member eligibility ─────────────────────────────────
         member = get_member(policy, submission.member_id)
@@ -134,6 +182,36 @@ class PolicyEngineAgent(BaseAgent):
 
         # Check category-specific exclusions (dental, vision)
         category_config = get_category_config(policy, submission.claim_category.value)
+        cat_upper = submission.claim_category.value.upper()
+
+        # Dental-specific exclusions from the Exclusions model
+        if cat_upper == "DENTAL" and policy.exclusions.dental_exclusions:
+            for excl in policy.exclusions.dental_exclusions:
+                excl_lower = excl.lower()
+                if excl_lower in combined_text:
+                    checks.append(CheckResult(
+                        check_name=f"Dental Exclusion — {excl}",
+                        passed=False,
+                        detail=f"Treatment matches dental exclusion: '{excl}'",
+                    ))
+                    if "EXCLUDED_CONDITION" not in rejection_reasons:
+                        rejection_reasons.append("EXCLUDED_CONDITION")
+                    exclusion_hit = True
+
+        # Vision-specific exclusions from the Exclusions model
+        if cat_upper == "VISION" and policy.exclusions.vision_exclusions:
+            for excl in policy.exclusions.vision_exclusions:
+                excl_lower = excl.lower()
+                if excl_lower in combined_text:
+                    checks.append(CheckResult(
+                        check_name=f"Vision Exclusion — {excl}",
+                        passed=False,
+                        detail=f"Treatment matches vision exclusion: '{excl}'",
+                    ))
+                    if "EXCLUDED_CONDITION" not in rejection_reasons:
+                        rejection_reasons.append("EXCLUDED_CONDITION")
+                    exclusion_hit = True
+
         if not exclusion_hit:
             checks.append(CheckResult(
                 check_name="General Exclusions",
@@ -307,6 +385,44 @@ class PolicyEngineAgent(BaseAgent):
                     check_name="Co-pay",
                     passed=True,
                     detail="No co-pay applicable for this category",
+                ))
+
+            # ── Annual OPD limit cap ──────────────────────────────
+            annual_opd_limit = policy.coverage.annual_opd_limit
+            ytd = submission.ytd_claims_amount or 0
+            remaining_budget = max(0, annual_opd_limit - ytd)
+
+            if final_amount > remaining_budget > 0:
+                # Partial — cap at remaining budget
+                checks.append(CheckResult(
+                    check_name="Annual OPD Limit",
+                    passed=False,
+                    detail=(
+                        f"Approved amount ₹{final_amount:,.0f} exceeds remaining annual OPD budget "
+                        f"of ₹{remaining_budget:,.0f} (limit: ₹{annual_opd_limit:,.0f}, "
+                        f"used YTD: ₹{ytd:,.0f}). Capped at ₹{remaining_budget:,.0f}."
+                    ),
+                ))
+                final_amount = remaining_budget
+            elif remaining_budget <= 0:
+                checks.append(CheckResult(
+                    check_name="Annual OPD Limit",
+                    passed=False,
+                    detail=(
+                        f"Annual OPD limit of ₹{annual_opd_limit:,.0f} has been fully exhausted "
+                        f"(used YTD: ₹{ytd:,.0f}). No further claims can be approved this year."
+                    ),
+                ))
+                rejection_reasons.append("ANNUAL_LIMIT_EXHAUSTED")
+                final_amount = 0
+            else:
+                checks.append(CheckResult(
+                    check_name="Annual OPD Limit",
+                    passed=True,
+                    detail=(
+                        f"₹{final_amount:,.0f} within remaining budget of ₹{remaining_budget:,.0f} "
+                        f"(limit: ₹{annual_opd_limit:,.0f}, used YTD: ₹{ytd:,.0f})"
+                    ),
                 ))
 
             breakdown = AmountBreakdown(

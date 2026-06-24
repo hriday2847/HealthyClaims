@@ -12,11 +12,13 @@ Endpoints:
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 from pathlib import Path
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import CORS_ORIGINS, TEST_CASES_FILE
@@ -69,6 +71,82 @@ def submit_claim(submission: ClaimSubmission):
         claim.result = decision.model_dump()
         claim.processing_time_ms = elapsed_ms
 
+    except Exception as exc:
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        claim.status = ClaimStatus.ERROR
+        claim.result = {"error": str(exc)}
+        claim.processing_time_ms = elapsed_ms
+
+    save_claim(claim)
+    return claim.model_dump()
+
+
+# Document type map for uploaded files
+_DOC_TYPE_MAP = {
+    "prescription": "PRESCRIPTION",
+    "hospital_bill": "HOSPITAL_BILL",
+    "lab_report": "LAB_REPORT",
+    "pharmacy_bill": "PHARMACY_BILL",
+    "dental_report": "DENTAL_REPORT",
+    "discharge_summary": "DISCHARGE_SUMMARY",
+}
+
+
+@app.post("/api/claims/upload")
+async def submit_claim_with_files(
+    member_id: str = Form(...),
+    claim_category: str = Form(...),
+    treatment_date: str = Form(...),
+    claimed_amount: float = Form(...),
+    hospital_name: Optional[str] = Form(None),
+    documents: list[UploadFile] = File(...),
+    document_types: str = Form(...),  # JSON array of type strings, e.g. '["PRESCRIPTION","HOSPITAL_BILL"]'
+):
+    """Submit a claim with real file uploads (images/PDFs).
+
+    Files are converted to base64 and fed through the LLM extraction pipeline.
+    The `document_types` form field must be a JSON array of document type strings,
+    one per uploaded file, in the same order.
+    """
+    try:
+        doc_types_list = json.loads(document_types)
+    except (json.JSONDecodeError, TypeError):
+        raise HTTPException(status_code=400, detail="document_types must be a valid JSON array of strings")
+
+    if len(doc_types_list) != len(documents):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Number of document_types ({len(doc_types_list)}) must match number of files ({len(documents)})",
+        )
+
+    claim_docs = []
+    for i, (uploaded, doc_type) in enumerate(zip(documents, doc_types_list)):
+        file_bytes = await uploaded.read()
+        b64 = base64.b64encode(file_bytes).decode("utf-8")
+        claim_docs.append(ClaimDocument(
+            file_id=f"UPLOAD_{i + 1}",
+            file_name=uploaded.filename,
+            actual_type=doc_type,
+            file_data=b64,
+        ))
+
+    submission = ClaimSubmission(
+        member_id=member_id,
+        claim_category=claim_category,
+        treatment_date=treatment_date,
+        claimed_amount=claimed_amount,
+        hospital_name=hospital_name,
+        documents=claim_docs,
+    )
+
+    claim = StoredClaim(submission=submission, status=ClaimStatus.PROCESSING)
+    start = time.perf_counter()
+    try:
+        decision = pipeline.process_claim(submission)
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        claim.status = ClaimStatus.DOCUMENT_ERROR if decision.document_errors else ClaimStatus.DECIDED
+        claim.result = decision.model_dump()
+        claim.processing_time_ms = elapsed_ms
     except Exception as exc:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         claim.status = ClaimStatus.ERROR
