@@ -13,8 +13,24 @@ const CATEGORIES = [
   { value: 'ALTERNATIVE_MEDICINE', label: 'Alternative Medicine' },
 ];
 
+// Hardcoded fallback so the form always works even if /api/members is unreachable
+const FALLBACK_MEMBERS = [
+  { member_id: 'EMP001', name: 'Rajesh Kumar', relationship: 'SELF' },
+  { member_id: 'EMP002', name: 'Priya Singh', relationship: 'SELF' },
+  { member_id: 'EMP003', name: 'Amit Verma', relationship: 'SELF' },
+  { member_id: 'EMP004', name: 'Sneha Reddy', relationship: 'SELF' },
+  { member_id: 'EMP005', name: 'Vikram Joshi', relationship: 'SELF' },
+  { member_id: 'EMP006', name: 'Kavita Nair', relationship: 'SELF' },
+  { member_id: 'EMP007', name: 'Suresh Patil', relationship: 'SELF' },
+  { member_id: 'EMP008', name: 'Ravi Menon', relationship: 'SELF' },
+  { member_id: 'EMP009', name: 'Anita Desai', relationship: 'SELF' },
+  { member_id: 'EMP010', name: 'Deepak Shah', relationship: 'SELF' },
+  { member_id: 'DEP001', name: 'Sunita Kumar', relationship: 'SPOUSE' },
+  { member_id: 'DEP002', name: 'Arjun Kumar', relationship: 'CHILD' },
+];
+
 export default function SubmitClaim() {
-  const [members, setMembers] = useState([]);
+  const [members, setMembers] = useState(FALLBACK_MEMBERS);
   const [form, setForm] = useState({
     member_id: '',
     claim_category: 'CONSULTATION',
@@ -32,8 +48,15 @@ export default function SubmitClaim() {
 
   useEffect(() => {
     apiGet('/api/members')
-      .then(data => setMembers(data.members || []))
-      .catch(() => setMembers([]));
+      .then(data => {
+        const fetched = data.members || [];
+        if (fetched.length > 0) setMembers(fetched);
+        // else keep FALLBACK_MEMBERS
+      })
+      .catch((err) => {
+        console.warn('Failed to fetch members from API, using fallback list:', err.message);
+        // keep FALLBACK_MEMBERS — already set as initial state
+      });
   }, []);
 
   const handleSubmit = async (e) => {
@@ -246,7 +269,7 @@ export default function SubmitClaim() {
             {submitting ? (
               <><div className="spinner" style={{ width: 16, height: 16 }}></div> Processing…</>
             ) : (
-              '🚀 Submit Claim'
+              'Submit Claim'
             )}
           </button>
         </form>
