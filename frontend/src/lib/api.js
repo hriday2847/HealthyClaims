@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = ''; // Requests go through Next.js rewrite proxy (next.config.js)
 
 export async function apiGet(path) {
   const res = await fetch(`${API_BASE}${path}`, {
