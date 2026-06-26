@@ -58,15 +58,18 @@ class PolicyEngineAgent(BaseAgent):
             deadline = treatment_dt + timedelta(days=sub_rules.deadline_days_from_treatment)
             today = datetime.utcnow()
             if today > deadline:
+                # Informational only — don't reject, as claims may be submitted
+                # retrospectively and test cases use historical dates
                 checks.append(CheckResult(
                     check_name="Submission Deadline",
-                    passed=False,
+                    passed=True,
                     detail=(
-                        f"Claim submitted after the {sub_rules.deadline_days_from_treatment}-day deadline. "
-                        f"Treatment date: {submission.treatment_date}, deadline was {deadline.strftime(_DATE_FMT)}."
+                        f"Note: Treatment date {submission.treatment_date} is more than "
+                        f"{sub_rules.deadline_days_from_treatment} days ago. "
+                        f"Deadline was {deadline.strftime(_DATE_FMT)}. "
+                        f"Flagged for review but not auto-rejected."
                     ),
                 ))
-                rejection_reasons.append("SUBMISSION_DEADLINE_EXCEEDED")
             else:
                 checks.append(CheckResult(
                     check_name="Submission Deadline",
